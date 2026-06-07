@@ -1,10 +1,12 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAutoSave } from "@/contexts/AutoSaveContext";
+import { useSync } from "@/contexts/SyncContext";
 import { getTeacherData } from "@/lib/storage";
 import { generateMissingFees, getDashboardStats } from "@/lib/feeUtils";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { Users, IndianRupee, AlertCircle, Calendar, TrendingUp } from "lucide-react";
+import { Users, IndianRupee, AlertCircle, Calendar, TrendingUp, RefreshCw } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import {
   BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, AreaChart, Area
@@ -15,13 +17,12 @@ import { format } from "date-fns";
 export default function Dashboard() {
   const { teacher } = useAuth();
   const { saveImmediate } = useAutoSave();
-  const [stats, setStats] = useState({
-    activeStudents: 0, collectedThisMonth: 0, pendingAmount: 0, pendingStudents: 0
-  });
+  const { syncFromSheets, isSyncing } = useSync();
+  const [stats, setStats] = useState({ activeStudents: 0, collectedThisMonth: 0, pendingAmount: 0, pendingStudents: 0 });
   const [monthlyData, setMonthlyData] = useState<Array<{ month: string; amount: number }>>([]);
   const [data, setData] = useState<TeacherData | null>(null);
 
-  useEffect(() => {
+  const loadLocal = () => {
     if (!teacher) return;
     let d = getTeacherData(teacher.id);
     const updated = generateMissingFees(teacher.id, d);
@@ -32,59 +33,55 @@ export default function Dashboard() {
     setData(d);
     setStats(getDashboardStats(d));
 
-    // build monthly collection for last 6 months
     const monthMap: Record<string, number> = {};
-    d.feeRecords.forEach(r => {
-      monthMap[r.month] = (monthMap[r.month] ?? 0) + r.paidAmount;
-    });
+    d.feeRecords.forEach(r => { monthMap[r.month] = (monthMap[r.month] ?? 0) + r.paidAmount; });
     const sorted = Object.entries(monthMap)
       .sort(([a], [b]) => a.localeCompare(b))
       .slice(-6)
       .map(([month, amount]) => ({ month: format(new Date(month + "-01"), "MMM yy"), amount }));
     setMonthlyData(sorted);
-  }, [teacher, saveImmediate]);
+  };
+
+  const handleSyncAndReload = async () => {
+    if (!teacher) return;
+    await syncFromSheets(teacher.id);
+    loadLocal();
+  };
+
+  useEffect(() => {
+    if (!teacher) return;
+    loadLocal();
+    // Pull latest from Sheets in background on first load
+    syncFromSheets(teacher.id).then(loadLocal);
+  }, [teacher]);
 
   if (!teacher) return null;
 
   const statCards = [
-    {
-      label: "Active Students",
-      value: stats.activeStudents,
-      icon: Users,
-      color: "text-blue-500",
-      bg: "bg-blue-50 dark:bg-blue-950/30",
-    },
-    {
-      label: "Collected This Month",
-      value: `₹${stats.collectedThisMonth.toLocaleString()}`,
-      icon: IndianRupee,
-      color: "text-green-500",
-      bg: "bg-green-50 dark:bg-green-950/30",
-    },
-    {
-      label: "Total Pending",
-      value: `₹${stats.pendingAmount.toLocaleString()}`,
-      sub: `From ${stats.pendingStudents} students`,
-      icon: AlertCircle,
-      color: "text-red-500",
-      bg: "bg-red-50 dark:bg-red-950/30",
-    },
-    {
-      label: "Current Period",
-      value: format(new Date(), "MMM yyyy"),
-      icon: Calendar,
-      color: "text-purple-500",
-      bg: "bg-purple-50 dark:bg-purple-950/30",
-    },
+    { label: "Active Students",      value: stats.activeStudents,                               icon: Users,        color: "text-blue-500",   bg: "bg-blue-50 dark:bg-blue-950/30" },
+    { label: "Collected This Month", value: `₹${stats.collectedThisMonth.toLocaleString()}`,    icon: IndianRupee,  color: "text-green-500",  bg: "bg-green-50 dark:bg-green-950/30" },
+    { label: "Total Pending",        value: `₹${stats.pendingAmount.toLocaleString()}`,         icon: AlertCircle,  color: "text-red-500",    bg: "bg-red-50 dark:bg-red-950/30", sub: `From ${stats.pendingStudents} students` },
+    { label: "Current Period",       value: format(new Date(), "MMM yyyy"),                     icon: Calendar,     color: "text-purple-500", bg: "bg-purple-50 dark:bg-purple-950/30" },
   ];
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Dashboard</h1>
-        <p className="text-muted-foreground mt-1 text-sm sm:text-base">
-          Welcome back, {teacher.name}.
-        </p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Dashboard</h1>
+          <p className="text-muted-foreground mt-0.5 text-sm">Welcome back, {teacher.name}.</p>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-1.5 shrink-0"
+          onClick={handleSyncAndReload}
+          disabled={isSyncing}
+          data-testid="button-sync"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? "animate-spin" : ""}`} />
+          <span className="hidden sm:inline">Sync</span>
+        </Button>
       </div>
 
       {/* Stat cards */}
@@ -123,7 +120,7 @@ export default function Dashboard() {
                 <AreaChart data={monthlyData}>
                   <defs>
                     <linearGradient id="colorAmount" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.2} />
+                      <stop offset="5%"  stopColor="hsl(var(--primary))" stopOpacity={0.2} />
                       <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0} />
                     </linearGradient>
                   </defs>
@@ -131,17 +128,11 @@ export default function Dashboard() {
                   <XAxis dataKey="month" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
                   <YAxis tick={{ fontSize: 11 }} axisLine={false} tickLine={false} width={50} />
                   <Tooltip formatter={(v: number) => [`₹${v.toLocaleString()}`, "Collected"]} />
-                  <Area
-                    type="monotone" dataKey="amount"
-                    stroke="hsl(var(--primary))" strokeWidth={2}
-                    fill="url(#colorAmount)"
-                  />
+                  <Area type="monotone" dataKey="amount" stroke="hsl(var(--primary))" strokeWidth={2} fill="url(#colorAmount)" />
                 </AreaChart>
               </ResponsiveContainer>
             ) : (
-              <div className="h-full flex items-center justify-center text-muted-foreground text-sm">
-                No collection data yet
-              </div>
+              <div className="h-full flex items-center justify-center text-muted-foreground text-sm">No collection data yet</div>
             )}
           </CardContent>
         </Card>
@@ -153,9 +144,7 @@ export default function Dashboard() {
           <CardContent className="h-[220px] sm:h-[260px] px-2 sm:px-4">
             {data && data.feeRecords.length > 0 ? (() => {
               const counts = { paid: 0, partial: 0, pending: 0, overdue: 0 };
-              data.feeRecords.forEach(r => {
-                if (r.status in counts) counts[r.status as keyof typeof counts]++;
-              });
+              data.feeRecords.forEach(r => { if (r.status in counts) counts[r.status as keyof typeof counts]++; });
               const barData = [
                 { name: "Paid",    value: counts.paid,    fill: "#22c55e" },
                 { name: "Partial", value: counts.partial, fill: "#f59e0b" },
@@ -170,27 +159,23 @@ export default function Dashboard() {
                     <YAxis tick={{ fontSize: 11 }} axisLine={false} tickLine={false} allowDecimals={false} width={30} />
                     <Tooltip />
                     <Bar dataKey="value" radius={[4, 4, 0, 0]}>
-                      {barData.map((entry, i) => (
-                        <Cell key={i} fill={entry.fill} />
-                      ))}
+                      {barData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
               );
             })() : (
-              <div className="h-full flex items-center justify-center text-muted-foreground text-sm">
-                No fee records yet
-              </div>
+              <div className="h-full flex items-center justify-center text-muted-foreground text-sm">No fee records yet</div>
             )}
           </CardContent>
         </Card>
       </div>
 
-      {/* Recent fee records */}
-      {data && data.feeRecords.length > 0 && (
+      {/* Recent activity */}
+      {data && data.feeRecords.filter(f => f.paidDate).length > 0 && (
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-base sm:text-lg">Recent Activity</CardTitle>
+            <CardTitle className="text-base sm:text-lg">Recent Payments</CardTitle>
           </CardHeader>
           <CardContent className="p-0">
             <div className="divide-y">

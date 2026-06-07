@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useRef, useState, ReactNode } from "react";
 import { TeacherData } from "@/types";
 import { saveTeacherData, SaveStatus } from "@/lib/storage";
+import { useSync } from "@/contexts/SyncContext";
 
 interface AutoSaveContextType {
   saveStatus: SaveStatus | null;
@@ -20,26 +21,37 @@ export function AutoSaveProvider({ children }: { children: ReactNode }) {
   const [saveStatus, setSaveStatus] = useState<SaveStatus | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingRef = useRef<{ teacherId: string; data: TeacherData } | null>(null);
+  const { syncToSheets } = useSync();
 
   const flush = useCallback(() => {
     if (!pendingRef.current) return;
     const { teacherId, data } = pendingRef.current;
     pendingRef.current = null;
+    // 1. Write to localStorage immediately
     saveTeacherData(teacherId, data, setSaveStatus);
-  }, []);
+    // 2. Push to Sheets in background (non-blocking)
+    syncToSheets(teacherId, data);
+  }, [syncToSheets]);
 
-  const save = useCallback((teacherId: string, data: TeacherData) => {
-    setSaveStatus("saving");
-    pendingRef.current = { teacherId, data };
-    if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(flush, DEBOUNCE_MS);
-  }, [flush]);
+  const save = useCallback(
+    (teacherId: string, data: TeacherData) => {
+      setSaveStatus("saving");
+      pendingRef.current = { teacherId, data };
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(flush, DEBOUNCE_MS);
+    },
+    [flush]
+  );
 
-  const saveImmediate = useCallback((teacherId: string, data: TeacherData) => {
-    if (timerRef.current) clearTimeout(timerRef.current);
-    pendingRef.current = null;
-    saveTeacherData(teacherId, data, setSaveStatus);
-  }, []);
+  const saveImmediate = useCallback(
+    (teacherId: string, data: TeacherData) => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      pendingRef.current = null;
+      saveTeacherData(teacherId, data, setSaveStatus);
+      syncToSheets(teacherId, data);
+    },
+    [syncToSheets]
+  );
 
   return (
     <AutoSaveContext.Provider value={{ saveStatus, save, saveImmediate }}>
