@@ -4,7 +4,7 @@
 
 [build.environment]
   NODE_VERSION = "20"
-  PNPM_VERSION = "9"
+  PNPM_VERSION = "10"
 
 # SPA fallback — serve index.html for every route so wouter can handle routing
 [[redirects]]
