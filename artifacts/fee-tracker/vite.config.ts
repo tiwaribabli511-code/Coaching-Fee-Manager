@@ -2,32 +2,37 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import path from "path";
-import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
 
-const rawPort = process.env.PORT ?? "3000";
-const port = Number(rawPort);
-const basePath = process.env.BASE_PATH ?? "/";
+// PORT and BASE_PATH are injected by Replit workflows; provide safe defaults
+// so `vite build` works anywhere (Netlify CI, local machines, etc.)
+const port     = Number(process.env.PORT     ?? "3000");
+const basePath =       process.env.BASE_PATH ?? "/";
+
+// Replit-specific plugins — only load when running inside Replit
+const isReplit = !!process.env.REPL_ID;
+const isDev    = process.env.NODE_ENV !== "production";
+
+const replitPlugins = isReplit
+  ? [
+      (await import("@replit/vite-plugin-runtime-error-modal")).default(),
+      ...(isDev
+        ? [
+            await import("@replit/vite-plugin-cartographer").then((m) =>
+              m.cartographer({ root: path.resolve(import.meta.dirname, "..") })
+            ),
+            await import("@replit/vite-plugin-dev-banner").then((m) =>
+              m.devBanner()
+            ),
+          ]
+        : []),
+    ]
+  : [];
 
 export default defineConfig({
   base: basePath,
-  plugins: [
-    react(),
-    tailwindcss(),
-    runtimeErrorOverlay(),
-    ...(process.env.NODE_ENV !== "production" &&
-    process.env.REPL_ID !== undefined
-      ? [
-          await import("@replit/vite-plugin-cartographer").then((m) =>
-            m.cartographer({
-              root: path.resolve(import.meta.dirname, ".."),
-            }),
-          ),
-          await import("@replit/vite-plugin-dev-banner").then((m) =>
-            m.devBanner(),
-          ),
-        ]
-      : []),
-  ],
+
+  plugins: [react(), tailwindcss(), ...replitPlugins],
+
   resolve: {
     alias: {
       "@": path.resolve(import.meta.dirname, "src"),
@@ -35,23 +40,25 @@ export default defineConfig({
     },
     dedupe: ["react", "react-dom"],
   },
+
   root: path.resolve(import.meta.dirname),
+
   build: {
-    outDir: path.resolve(import.meta.dirname, "dist/public"),
+    outDir:     path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
   },
+
   server: {
     port,
     strictPort: true,
-    host: "0.0.0.0",
+    host:         "0.0.0.0",
     allowedHosts: true,
-    fs: {
-      strict: true,
-    },
+    fs: { strict: true },
   },
+
   preview: {
     port,
-    host: "0.0.0.0",
+    host:         "0.0.0.0",
     allowedHosts: true,
   },
 });
